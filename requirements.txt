@@ -5,6 +5,7 @@ pdfplumber
 keybert
 sentence-transformers
 googletrans==4.0.0-rc1
-matplotlib
 pandas
-reportlab  # For PDF export
+matplotlib
+reportlab
+sentence-transformers
