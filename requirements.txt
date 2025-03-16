@@ -1,6 +1,6 @@
 streamlit==1.29.0
 transformers==4.36.2
-torch==2.1.2
+torch==2.2.2  # Updated for Python 3.12 compatibility
 pdfplumber==0.10.3
 pandas==2.1.4
 matplotlib==3.8.2
