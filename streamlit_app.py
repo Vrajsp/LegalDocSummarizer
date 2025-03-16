@@ -4,6 +4,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from transformers import pipeline
 from sentence_transformers import SentenceTransformer, util
+import textwrap
+
 
 st.set_page_config(page_title="Legal Document Analyzer", layout="wide")
 
