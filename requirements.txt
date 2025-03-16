@@ -1,7 +1,7 @@
-
-pdfplumber
+streamlit
 transformers
+torch
+pdfplumber
 keybert
 googletrans==4.0.0-rc1
 sentence-transformers
-torch
