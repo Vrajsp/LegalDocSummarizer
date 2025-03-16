@@ -17,8 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Configure page
 st.set_page_config(
-    page_title="LegalMind Pro",
-    page_icon="⚖️",
+    page_title="LegalMind",
+    page_icon="👨‍⚖️",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
