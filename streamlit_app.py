@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Configuration
 st.set_page_config(
-    page_title="LegalAI",
+    page_title="LegalAgsdgsdgsdgI",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="collapsed"
