@@ -1,62 +1,98 @@
 import streamlit as st
 import pdfplumber
-import pandas as pd
-import matplotlib.pyplot as plt
+import fitz  # PyMuPDF
 from transformers import pipeline
-from sentence_transformers import SentenceTransformer, util
-import textwrap
+from keybert import KeyBERT
+import nltk
+from nltk.corpus import stopwords
+import matplotlib.pyplot as plt
+from sentence_transformers import SentenceTransformer
+import pandas as pd
+import torch
 
+# Downloads
+nltk.download('punkt')
+nltk.download('stopwords')
 
-st.set_page_config(page_title="Legal Document Analyzer", layout="wide")
+# Models
+summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
+kw_model = KeyBERT()
+sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
 
-st.title("📄 Legal Document Analyzer")
+# Sidebar
+st.sidebar.title("⚖️ Legal Doc Summarizer")
+feature = st.sidebar.radio("Choose a feature", ['Upload PDF', 'Summarize Text', 'Keyword Extraction', 'Keyword Chart'])
 
-uploaded_file = st.file_uploader("Upload a legal PDF document", type="pdf")
-
-# Predefined red flag phrases
-red_flags = [
-    "non-compete clause", "low notice period", "salary delay", "no paid leave", "discrimination",
-    "mandatory arbitration", "harassment", "no severance", "unfair termination", "no health benefits"
-]
-
-model = SentenceTransformer('all-MiniLM-L6-v2')
-summarizer = pipeline("summarization")
-
-if uploaded_file:
+# File uploader
+def read_pdf_pdfplumber(uploaded_file):
     with pdfplumber.open(uploaded_file) as pdf:
-        text = " ".join(page.extract_text() or '' for page in pdf.pages)
+        text = ''.join(page.extract_text() or '' for page in pdf.pages)
+    return text
 
-    st.subheader("📌 Document Summary")
-    summary = summarizer(text, max_length=120, min_length=30, do_sample=False)[0]['summary_text']
-    st.markdown(f"**Paragraph Summary:**\n{textwrap.fill(summary, width=120)}")
+def read_pdf_pymupdf(uploaded_file):
+    doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
+    return "\n".join([page.get_text() for page in doc])
 
-    bullet_pipe = pipeline("summarization")
-    bullet_points = bullet_pipe(text, max_length=60, min_length=15, do_sample=False, truncation=True)[0]['summary_text']
-    st.markdown("**\n\n🔹 Bullet Points:**")
-    for point in bullet_points.split('.'):
-        if point.strip():
-            st.markdown(f"- {point.strip()}")
+# Summarization
+def generate_summary(text):
+    if len(text.split()) < 50:
+        return "Text too short for summarization."
+    summary = summarizer(text, max_length=200, min_length=30, do_sample=False)
+    return summary[0]['summary_text']
 
-    st.subheader("⚠️ Red Flag Analysis")
-    text_emb = model.encode(text, convert_to_tensor=True)
-    scores = []
+# Keyword Extraction
+def extract_keywords(text, num_keywords=10):
+    keywords = kw_model.extract_keywords(text, top_n=num_keywords)
+    return keywords
 
-    for phrase in red_flags:
-        phrase_emb = model.encode(phrase, convert_to_tensor=True)
-        sim = util.pytorch_cos_sim(text_emb, phrase_emb)
-        scores.append(round(float(sim.max()), 4))
+# Plotting
+def plot_keywords(keywords):
+    words, scores = zip(*keywords)
+    plt.figure(figsize=(10, 5))
+    plt.bar(words, scores, color='skyblue')
+    plt.title('Top Keywords')
+    plt.xticks(rotation=45)
+    st.pyplot(plt)
 
-    df = pd.DataFrame({"Red Flag": red_flags, "Score": scores})
-    df = df.sort_values(by="Score", ascending=False).reset_index(drop=True)
-    st.dataframe(df.style.background_gradient(cmap='Reds', subset="Score"), use_container_width=True)
+# Main Features
+if feature == 'Upload PDF':
+    st.title("📄 Upload and View PDF")
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+    if uploaded_file:
+        method = st.radio("Choose text extraction method", ["pdfplumber", "PyMuPDF"])
+        text = read_pdf_pdfplumber(uploaded_file) if method == "pdfplumber" else read_pdf_pymupdf(uploaded_file)
+        st.subheader("Extracted Text:")
+        st.text_area("Text", text, height=300)
 
-    st.subheader("📊 Detected Red Flags")
-    fig, ax = plt.subplots()
-    red_df = df[df['Score'] > 0.01]
-    ax.barh(red_df['Red Flag'], red_df['Score'], color="crimson")
-    ax.invert_yaxis()
-    ax.set_xlabel("Score")
-    st.pyplot(fig)
+elif feature == 'Summarize Text':
+    st.title("📝 Text Summarizer")
+    input_text = st.text_area("Paste your legal text here")
+    if st.button("Summarize"):
+        with st.spinner("Summarizing..."):
+            summary = generate_summary(input_text)
+            st.success("Summary generated!")
+            st.subheader("Summary:")
+            st.write(summary)
 
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Red Flag Report (CSV)", csv, "red_flags.csv", "text/csv")
+elif feature == 'Keyword Extraction':
+    st.title("🔍 Keyword Extraction")
+    input_text = st.text_area("Paste text for keyword extraction")
+    top_n = st.slider("Number of keywords", 5, 20, 10)
+    if st.button("Extract Keywords"):
+        with st.spinner("Extracting..."):
+            keywords = extract_keywords(input_text, top_n)
+            st.subheader("Keywords:")
+            for word, score in keywords:
+                st.write(f"• **{word}** (Score: {score:.2f})")
+
+elif feature == 'Keyword Chart':
+    st.title("📊 Keyword Frequency Chart")
+    input_text = st.text_area("Paste text for frequency analysis")
+    top_n = st.slider("Top N Keywords", 5, 20, 10)
+    if st.button("Show Chart"):
+        keywords = extract_keywords(input_text, top_n)
+        plot_keywords(keywords)
+
+# Footer
+st.markdown("---")
+st.markdown("Made with ❤️ using `Streamlit`, `Transformers`, `KeyBERT`, and more.")
