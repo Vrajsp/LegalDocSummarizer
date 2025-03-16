@@ -1,98 +1,65 @@
 import streamlit as st
-import pdfplumber
-import fitz  # PyMuPDF
 from transformers import pipeline
-from keybert import KeyBERT
+import pdfplumber
+import torch
 import nltk
 from nltk.corpus import stopwords
+from keybert import KeyBERT
 import matplotlib.pyplot as plt
-from sentence_transformers import SentenceTransformer
 import pandas as pd
-import torch
+from fpdf import FPDF
+from sentence_transformers import SentenceTransformer
 
-# Downloads
-nltk.download('punkt')
 nltk.download('stopwords')
 
-# Models
+# Initialize models
 summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
-kw_model = KeyBERT()
-sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+kw_model = KeyBERT(model=SentenceTransformer('all-MiniLM-L6-v2'))
 
-# Sidebar
-st.sidebar.title("⚖️ Legal Doc Summarizer")
-feature = st.sidebar.radio("Choose a feature", ['Upload PDF', 'Summarize Text', 'Keyword Extraction', 'Keyword Chart'])
+# Streamlit UI
+st.title("🧠 Legal Document Summarizer & Keyword Extractor")
 
-# File uploader
-def read_pdf_pdfplumber(uploaded_file):
+uploaded_file = st.file_uploader("Upload a PDF file", type=["pdf"])
+
+if uploaded_file:
     with pdfplumber.open(uploaded_file) as pdf:
-        text = ''.join(page.extract_text() or '' for page in pdf.pages)
-    return text
+        text = ""
+        for page in pdf.pages:
+            text += page.extract_text() or ""
 
-def read_pdf_pymupdf(uploaded_file):
-    doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
-    return "\n".join([page.get_text() for page in doc])
+    st.subheader("📄 Original Text")
+    st.write(text[:2000] + ("..." if len(text) > 2000 else ""))
 
-# Summarization
-def generate_summary(text):
-    if len(text.split()) < 50:
-        return "Text too short for summarization."
-    summary = summarizer(text, max_length=200, min_length=30, do_sample=False)
-    return summary[0]['summary_text']
+    if st.button("🔍 Summarize & Analyze"):
+        # Summarize
+        summary = summarizer(text[:1024], max_length=150, min_length=30, do_sample=False)[0]['summary_text']
 
-# Keyword Extraction
-def extract_keywords(text, num_keywords=10):
-    keywords = kw_model.extract_keywords(text, top_n=num_keywords)
-    return keywords
+        st.subheader("📝 Summary")
+        st.write(summary)
 
-# Plotting
-def plot_keywords(keywords):
-    words, scores = zip(*keywords)
-    plt.figure(figsize=(10, 5))
-    plt.bar(words, scores, color='skyblue')
-    plt.title('Top Keywords')
-    plt.xticks(rotation=45)
-    st.pyplot(plt)
+        # Keywords
+        keywords = kw_model.extract_keywords(text, keyphrase_ngram_range=(1, 2), stop_words='english', top_n=10)
 
-# Main Features
-if feature == 'Upload PDF':
-    st.title("📄 Upload and View PDF")
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-    if uploaded_file:
-        method = st.radio("Choose text extraction method", ["pdfplumber", "PyMuPDF"])
-        text = read_pdf_pdfplumber(uploaded_file) if method == "pdfplumber" else read_pdf_pymupdf(uploaded_file)
-        st.subheader("Extracted Text:")
-        st.text_area("Text", text, height=300)
+        st.subheader("🏷️ Top Keywords")
+        for kw, score in keywords:
+            st.markdown(f"- **{kw}** ({score:.2f})")
 
-elif feature == 'Summarize Text':
-    st.title("📝 Text Summarizer")
-    input_text = st.text_area("Paste your legal text here")
-    if st.button("Summarize"):
-        with st.spinner("Summarizing..."):
-            summary = generate_summary(input_text)
-            st.success("Summary generated!")
-            st.subheader("Summary:")
-            st.write(summary)
+        # Matplotlib chart
+        st.subheader("📊 Keyword Scores")
+        words = [kw[0] for kw in keywords]
+        scores = [kw[1] for kw in keywords]
+        fig, ax = plt.subplots()
+        ax.barh(words[::-1], scores[::-1])
+        st.pyplot(fig)
 
-elif feature == 'Keyword Extraction':
-    st.title("🔍 Keyword Extraction")
-    input_text = st.text_area("Paste text for keyword extraction")
-    top_n = st.slider("Number of keywords", 5, 20, 10)
-    if st.button("Extract Keywords"):
-        with st.spinner("Extracting..."):
-            keywords = extract_keywords(input_text, top_n)
-            st.subheader("Keywords:")
-            for word, score in keywords:
-                st.write(f"• **{word}** (Score: {score:.2f})")
+        # Create PDF
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)
+        pdf.multi_cell(0, 10, "Summary:\n" + summary + "\n\nKeywords:\n" + "\n".join(f"{kw[0]} ({kw[1]:.2f})" for kw in keywords))
+        output_path = "summary_output.pdf"
+        pdf.output(output_path)
 
-elif feature == 'Keyword Chart':
-    st.title("📊 Keyword Frequency Chart")
-    input_text = st.text_area("Paste text for frequency analysis")
-    top_n = st.slider("Top N Keywords", 5, 20, 10)
-    if st.button("Show Chart"):
-        keywords = extract_keywords(input_text, top_n)
-        plot_keywords(keywords)
+        with open(output_path, "rb") as f:
+            st.download_button("📥 Download Summary PDF", f, file_name="summary_output.pdf", mime="application/pdf")
 
-# Footer
-st.markdown("---")
-st.markdown("Made with ❤️ using `Streamlit`, `Transformers`, `KeyBERT`, and more.")
