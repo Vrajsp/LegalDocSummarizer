@@ -4,8 +4,8 @@ torch
 pdfplumber
 keybert
 sentence-transformers
+nltk
 matplotlib
-pandas
 scikit-learn
+pandas
 fpdf
-PyMuPDF
