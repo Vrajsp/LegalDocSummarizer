@@ -1,4 +1,3 @@
-# streamlit_app.py
 import streamlit as st
 import pdfplumber
 import torch
@@ -9,15 +8,7 @@ from io import BytesIO
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-# Configuration
-st.set_page_config(
-    page_title="LegalAgsdgsdgsdgI",
-    page_icon="⚖️",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
-
-# Modern CSS
+# Modern CSS for a sleek UI
 st.markdown("""
 <style>
 :root {
@@ -25,6 +16,8 @@ st.markdown("""
     --secondary: #4f46e5;
     --background: #0f172a;
     --text: #f8fafc;
+    --card-bg: rgba(15, 23, 42, 0.7);
+    --card-border: rgba(255, 255, 255, 0.1);
 }
 
 * {
@@ -39,21 +32,28 @@ st.markdown("""
 .header {
     background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
     padding: 2rem 0;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
+    border-bottom: 1px solid var(--card-border);
+    text-align: center;
 }
 
 .card {
-    background: rgba(15, 23, 42, 0.7);
+    background: var(--card-bg);
     border-radius: 12px;
     padding: 1.5rem;
-    border: 1px solid rgba(255,255,255,0.1);
+    border: 1px solid var(--card-border);
     backdrop-filter: blur(10px);
     margin: 1rem 0;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
 }
 
 .progress {
     height: 4px;
-    background: rgba(255,255,255,0.1);
+    background: rgba(255, 255, 255, 0.1);
     border-radius: 2px;
 }
 
@@ -75,12 +75,17 @@ st.markdown("""
 .stButton>button:hover {
     transform: translateY(-2px);
 }
+
+h1, h2, h3 {
+    color: var(--text) !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
+# Load models with caching
 @st.cache_resource
 def load_models():
-    """Load optimized models"""
+    """Load optimized models for summarization and classification"""
     return {
         'summarizer': pipeline(
             "summarization",
@@ -95,13 +100,15 @@ def load_models():
         )
     }
 
+# Extract text from PDF
 def extract_text(file, max_pages=20):
-    """Fast text extraction with page limit"""
+    """Extract text from PDF with a page limit"""
     with pdfplumber.open(file) as pdf:
         return " ".join([p.extract_text() for p in pdf.pages[:max_pages]])
 
+# Process document in parallel
 def process_document(text, models):
-    """Parallel document processing"""
+    """Parallel processing for summarization and risk detection"""
     with ThreadPoolExecutor() as executor:
         summary_future = executor.submit(
             models['summarizer'], 
@@ -131,20 +138,15 @@ def process_document(text, models):
             }).head(5)
         }
 
+# Main app
 def main():
-    """Main app interface"""
+    """Main application interface"""
     st.markdown('<div class="header">', unsafe_allow_html=True)
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        st.title("⚡ LegalAI Pro")
-    with col2:
-        st.markdown("""
-        <div style="padding-top: 1rem;">
-            AI-powered legal document analysis with real-time insights
-        </div>
-        """, unsafe_allow_html=True)
+    st.title("⚡ LegalDocSummarizer Pro")
+    st.markdown("AI-powered legal document analysis with real-time insights")
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # File uploader
     uploaded_file = st.file_uploader("Upload PDF", type="pdf")
     
     if uploaded_file:
@@ -152,15 +154,15 @@ def main():
         models = load_models()
         
         with st.status("Analyzing document...", expanded=True) as status:
-            # Extraction
+            # Extract text
             st.write("📄 Extracting text...")
             text = extract_text(uploaded_file)
             
-            # Processing
+            # Process document
             st.write("🧠 Processing content...")
             results = process_document(text, models)
             
-            # Visualization
+            # Generate visualization
             st.write("📊 Generating insights...")
             fig = px.bar(
                 results['risks'],
@@ -174,18 +176,18 @@ def main():
             
             status.update(label="Analysis Complete", state="complete")
         
-        # Results
+        # Display results
         col1, col2 = st.columns(2)
         
         with col1:
             st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.subheader("Executive Summary")
+            st.subheader("📝 Executive Summary")
             st.write(results['summary'])
             st.markdown('</div>', unsafe_allow_html=True)
         
         with col2:
             st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.subheader("Risk Analysis")
+            st.subheader("🚨 Risk Analysis")
             st.plotly_chart(fig, use_container_width=True)
             st.dataframe(
                 results['risks'].style.format({'Confidence': '{:.1%}'}),
@@ -194,11 +196,11 @@ def main():
             )
             st.markdown('</div>', unsafe_allow_html=True)
         
-        # Performance
+        # Performance metrics
         st.markdown(f"""
         <div class="card">
             <div style="display: flex; justify-content: space-between;">
-                <div>Total Processing Time</div>
+                <div>⏱️ Total Processing Time</div>
                 <div style="color: #4ade80">{time.time()-start_time:.2f}s</div>
             </div>
         </div>
