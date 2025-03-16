@@ -1,79 +1,66 @@
-
 import streamlit as st
-import pdfplumber
 from transformers import pipeline
-from keybert import KeyBERT
-from googletrans import Translator
+import pdfplumber
+import tempfile
 
-st.set_page_config(page_title="Legal Document Summarizer", layout="wide")
+# Page configuration
+st.set_page_config(page_title="LegalDocSummarizer", layout="wide", page_icon="📄")
 
-st.markdown(
-    "<h1 style='text-align: center; color: #00ffae;'>⚖️ Legal Document Summarizer</h1>",
-    unsafe_allow_html=True
-)
-st.markdown(
-    "<p style='text-align: center; font-size: 18px;'>Summarize, extract keywords, translate, and ask questions about legal documents.</p>",
-    unsafe_allow_html=True
-)
+# Custom CSS
+st.markdown("""
+    <style>
+        html, body, [class*="css"]  {
+            font-family: 'Segoe UI', sans-serif;
+        }
+        .main {
+            background-color: #f7f9fc;
+        }
+        .stButton>button {
+            background-color: #4a90e2;
+            color: white;
+            border-radius: 8px;
+            padding: 0.6em 1.5em;
+            border: none;
+            font-size: 1rem;
+            transition: background-color 0.3s ease;
+        }
+        .stButton>button:hover {
+            background-color: #357ab8;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
-uploaded_file = st.file_uploader("📁 Upload Legal Document (PDF only)", type=["pdf"])
+# Header
+st.markdown("<h1 style='text-align: center; color: #333;'>📄 Legal Document Summarizer</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: gray;'>Upload your legal document (PDF) and get a quick summary powered by AI.</p>", unsafe_allow_html=True)
 
+# Upload
+uploaded_file = st.file_uploader("Choose a legal document (PDF)", type="pdf")
+
+# Pipeline
+summarizer = pipeline("summarization")
+
+# Process PDF
 if uploaded_file is not None:
-    with pdfplumber.open(uploaded_file) as pdf:
-        text = ' '.join([page.extract_text() for page in pdf.pages if page.extract_text()])
+    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+        tmp_file.write(uploaded_file.read())
+        file_path = tmp_file.name
 
-    if not text:
-        st.error("⚠️ No readable text found in the PDF.")
+    with pdfplumber.open(file_path) as pdf:
+        full_text = ""
+        for page in pdf.pages:
+            full_text += page.extract_text() + "\n"
+
+    if full_text.strip() == "":
+        st.error("No text found in the PDF.")
     else:
-        st.success("✅ Document processed successfully!")
+        st.subheader("📝 Extracted Text Preview")
+        st.text_area("Text", full_text[:3000], height=200)
 
-        # Summarize
-        with st.spinner("Summarizing..."):
-            summarizer = pipeline("summarization", model="t5-small")
-            summary = summarizer(text[:1000])[0]['summary_text']
+        if st.button("Summarize"):
+            with st.spinner("Summarizing..."):
+                summary = summarizer(full_text, max_length=512, min_length=100, do_sample=False)[0]["summary_text"]
+            st.success("Done!")
+            st.subheader("🧠 Summary")
+            st.write(summary)
 
-        st.subheader("📄 Summary (Plain Text)")
-        st.code(summary, language='text')
-
-        # Bullet points
-        bullet_summary = "\n".join([f"- {line.strip().capitalize()}" for line in summary.split('.') if line.strip()])
-        st.subheader("🧾 Summary (Bullet Points)")
-        st.markdown(bullet_summary)
-
-        # Keywords
-        with st.spinner("Extracting Keywords..."):
-            kw_model = KeyBERT()
-            keywords = kw_model.extract_keywords(text, top_n=10)
-
-        st.subheader("🔑 Keywords")
-        for kw, score in keywords:
-            st.markdown(f"- **{kw}** (Score: {score:.2f})")
-
-        # Translations
-        with st.spinner("🔁 Translating..."):
-            translator = Translator()
-            hindi = translator.translate(summary, dest='hi').text
-            marathi = translator.translate(summary, dest='mr').text
-
-        st.subheader("🇮🇳 Hindi Translation")
-        st.write(hindi)
-
-        st.subheader("🇮🇳 Marathi Translation")
-        st.write(marathi)
-
-        # Q&A Section
-        st.subheader("❓ Ask Questions About the Document")
-        user_question = st.text_input("Type your question here:")
-        if user_question:
-            with st.spinner("Thinking..."):
-                qa_pipeline = pipeline("question-answering")
-                answer = qa_pipeline(context=text[:3000], question=user_question)
-                st.markdown(f"**Answer:** {answer['answer']}")
-
-        # Download Summary
-        summary_output = f"SUMMARY (Plain):\n{summary}\n\nSUMMARY (Bullets):\n{bullet_summary}\n\nKEYWORDS:\n" +                          "\n".join([f"{kw[0]} ({kw[1]:.2f})" for kw in keywords]) +                          f"\n\nHindi:\n{hindi}\n\nMarathi:\n{marathi}"
-        st.download_button("⬇️ Download Summary as TXT", summary_output, file_name="legal_summary.txt")
-    st.markdown("---")
-    st.markdown("<p style='text-align: center;'>Made with ❤️ for Hackathons</p>", unsafe_allow_html=True)
-else:
-    st.info("Upload a PDF document to get started!")
