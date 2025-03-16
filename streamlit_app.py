@@ -4,6 +4,10 @@ from transformers import pipeline
 from nrclex import NRCLex
 import spacy
 import matplotlib.pyplot as plt
+import sys
+import streamlit as st
+
+st.write("Python version:", sys.version)
 
 # Load summarizer pipeline
 summarizer = pipeline("summarization")
