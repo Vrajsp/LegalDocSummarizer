@@ -5,10 +5,9 @@ transformers==4.39.3
 pandas==2.2.2
 plotly==5.18.0
 numpy==1.26.4
-scipy==1.13.0
-kaleido==0.2.1  # For Plotly static image export
-python-dotenv==1.0.0  # For environment variable management
-protobuf==3.20.3  # Required for some Transformers models
-Pillow==10.2.0  # For image processing in reports
-accelerate==0.29.3  # For optimized model loading
-sentence-transformers==2.6.0  # For faster embeddings
+kaleido==0.2.1
+python-dotenv==1.0.0
+protobuf==3.20.3
+Pillow==10.2.0
+accelerate==0.29.3
+sentence-transformers==2.6.0
