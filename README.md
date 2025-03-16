@@ -8,15 +8,15 @@ A powerful AI-powered tool for NGOs, citizens, and legal consultants to summariz
 
 ---
 
-## 🚀 Features
+## Features
 
-✅ Upload PDF legal docs  
-✅ Summarize complex content using AI (T5)  
-✅ Bullet-point & paragraph summary views  
-✅ Zero-shot Red Flag Detection using BART  
-✅ Visual bar chart of risk scores  
-✅ Download reports as PDF or CSV  
-✅ Built with Streamlit (one-click web UI)
+ Upload PDF legal docs  
+ Summarize complex content using AI (T5)  
+ Bullet-point & paragraph summary views  
+ Zero-shot Red Flag Detection using BART  
+ Visual bar chart of risk scores  
+ Download reports as PDF or CSV  
+ Built with Streamlit (one-click web UI)
 
 ---
 
@@ -45,3 +45,14 @@ git clone https://github.com/Vrajsp/LegalDocSummarizer.git
 cd LegalDocSummarizer
 pip install -r requirements.txt
 streamlit run streamlit_app.py
+```
+
+
+## Use Cases
+
+   - NGOs reviewing human rights policies
+   - Legal advisors scanning environmental laws
+   - Citizens reading contracts & government acts
+   - Students analyzing legal case documents
+
+
