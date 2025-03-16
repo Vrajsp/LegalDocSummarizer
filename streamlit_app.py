@@ -1,66 +1,76 @@
 import streamlit as st
-from transformers import pipeline
 import pdfplumber
-import tempfile
+from transformers import pipeline
+from nrclex import NRCLex
+import spacy
+import matplotlib.pyplot as plt
 
-# Page configuration
-st.set_page_config(page_title="LegalDocSummarizer", layout="wide", page_icon="📄")
-
-# Custom CSS
-st.markdown("""
-    <style>
-        html, body, [class*="css"]  {
-            font-family: 'Segoe UI', sans-serif;
-        }
-        .main {
-            background-color: #f7f9fc;
-        }
-        .stButton>button {
-            background-color: #4a90e2;
-            color: white;
-            border-radius: 8px;
-            padding: 0.6em 1.5em;
-            border: none;
-            font-size: 1rem;
-            transition: background-color 0.3s ease;
-        }
-        .stButton>button:hover {
-            background-color: #357ab8;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
-# Header
-st.markdown("<h1 style='text-align: center; color: #333;'>📄 Legal Document Summarizer</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: gray;'>Upload your legal document (PDF) and get a quick summary powered by AI.</p>", unsafe_allow_html=True)
-
-# Upload
-uploaded_file = st.file_uploader("Choose a legal document (PDF)", type="pdf")
-
-# Pipeline
+# Load summarizer pipeline
 summarizer = pipeline("summarization")
 
-# Process PDF
-if uploaded_file is not None:
-    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-        tmp_file.write(uploaded_file.read())
-        file_path = tmp_file.name
+# Load spaCy model
+nlp = spacy.load("en_core_web_sm")
 
-    with pdfplumber.open(file_path) as pdf:
+# Page setup
+st.set_page_config(page_title="LegalDocSummarizer", layout="wide")
+st.title("📄 Legal Document Summarizer")
+st.markdown("Upload a legal PDF and get a quick AI-generated summary, emotion analysis, and argument breakdown.")
+
+# File uploader
+uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
+
+if uploaded_file:
+    with pdfplumber.open(uploaded_file) as pdf:
         full_text = ""
         for page in pdf.pages:
             full_text += page.extract_text() + "\n"
 
-    if full_text.strip() == "":
-        st.error("No text found in the PDF.")
+    st.subheader("📃 Extracted Text")
+    with st.expander("View full document text"):
+        st.text_area("Text", full_text, height=300)
+
+    # Summarization
+    st.subheader("✂️ Summary")
+    summary_chunks = []
+    for i in range(0, len(full_text), 1000):
+        chunk = full_text[i:i+1000]
+        if len(chunk.strip()) > 50:
+            result = summarizer(chunk, max_length=130, min_length=30, do_sample=False)
+            summary_chunks.append(result[0]["summary_text"])
+
+    summary = " ".join(summary_chunks)
+    st.success(summary)
+
+    # Emotion Detection
+    st.subheader("💬 Emotion Detection")
+    emotion = NRCLex(full_text)
+    top_emotions = emotion.top_emotions
+
+    if top_emotions:
+        labels, scores = zip(*top_emotions)
+        fig, ax = plt.subplots()
+        ax.bar(labels, scores, color="orange")
+        st.pyplot(fig)
     else:
-        st.subheader("📝 Extracted Text Preview")
-        st.text_area("Text", full_text[:3000], height=200)
+        st.info("No strong emotional tones detected.")
 
-        if st.button("Summarize"):
-            with st.spinner("Summarizing..."):
-                summary = summarizer(full_text, max_length=512, min_length=100, do_sample=False)[0]["summary_text"]
-            st.success("Done!")
-            st.subheader("🧠 Summary")
-            st.write(summary)
+    # Argument Mapping
+    st.subheader("🧠 Argument Structure")
+    doc = nlp(full_text[:1500])  # limit for performance
 
+    claims, evidences, conclusions = [], [], []
+    for sent in doc.sents:
+        lower = sent.text.lower()
+        if "we argue" in lower or "this suggests" in lower:
+            claims.append(sent.text)
+        elif "because" in lower or "due to" in lower:
+            evidences.append(sent.text)
+        elif "therefore" in lower or "hence" in lower or "thus" in lower:
+            conclusions.append(sent.text)
+
+    with st.expander("📌 Claims"):
+        for i, c in enumerate(claims): st.markdown(f"**{i+1}.** {c}")
+    with st.expander("🔍 Evidences"):
+        for i, e in enumerate(evidences): st.markdown(f"**{i+1}.** {e}")
+    with st.expander("✅ Conclusions"):
+        for i, con in enumerate(conclusions): st.markdown(f"**{i+1}.** {con}")
