@@ -2,143 +2,153 @@
 import streamlit as st
 import pdfplumber
 import torch
-from transformers import pipeline
-import pandas as pd
-import matplotlib.pyplot as plt
-import plotly.express as px
-from io import BytesIO
 import time
+import numpy as np
+import pandas as pd
+from transformers import pipeline, AutoTokenizer
+from io import BytesIO
+import plotly.express as px
+import plotly.graph_objects as go
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
+from concurrent.futures import ThreadPoolExecutor
 
-# Apple-inspired CSS
+# Configure page
+st.set_page_config(
+    page_title="LegalMind Pro",
+    page_icon="⚖️",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Cache optimized models
+@st.cache_resource(ttl=3600)
+def load_models():
+    """Load quantized models with optimized settings"""
+    return {
+        'summarizer': pipeline(
+            "summarization",
+            model="facebook/bart-large-cnn",
+            device=0 if torch.cuda.is_available() else -1,
+            torch_dtype=torch.float16
+        ),
+        'classifier': pipeline(
+            "zero-shot-classification",
+            model="typeform/distilbert-base-uncased-mnli",
+            device=0 if torch.cuda.is_available() else -1
+        )
+    }
+
+# Professional CSS
 st.markdown("""
 <style>
 :root {
-    --space-black: #1D1D1F;
-    --silver: #F5F5F7;
-    --gold: #FFD700;
-    --gradient-start: #000000;
-    --gradient-end: #2C2C2E;
+    --primary: #1A73E8;
+    --secondary: #34A853;
+    --background: #F8F9FA;
+    --text: #202124;
 }
 
 * {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    font-family: 'Google Sans', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 .stApp {
-    background: linear-gradient(165deg, var(--gradient-start) 30%, var(--gradient-end) 100%);
+    background: var(--background);
 }
 
-.apple-card {
-    background: rgba(255, 255, 255, 0.02);
-    backdrop-filter: blur(10px);
-    border-radius: 18px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+.header-container {
+    background: white;
     padding: 2rem;
-    margin: 1.5rem 0;
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    margin-bottom: 2rem;
 }
 
-.apple-card:hover {
-    transform: translateY(-4px);
-}
-
-.apple-button {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: white !important;
+.analysis-card {
+    background: white;
     border-radius: 12px;
-    padding: 0.8rem 2rem;
-    font-weight: 500;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    padding: 2rem;
+    margin: 1rem 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+    transition: transform 0.2s;
 }
 
-.apple-button:hover {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.1));
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    transform: scale(1.03);
+.analysis-card:hover {
+    transform: translateY(-2px);
 }
 
 .progress-bar {
-    height: 4px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 2px;
-    overflow: hidden;
+    height: 6px;
+    background: rgba(0,0,0,0.1);
+    border-radius: 3px;
+    margin: 1rem 0;
 }
 
 .progress-fill {
     height: 100%;
-    background: var(--gold);
-    width: 0%;
-    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    background: var(--primary);
+    border-radius: 3px;
+    transition: width 0.4s ease;
 }
 
-.dynamic-header {
-    font-size: 2.5rem;
-    font-weight: 700;
-    background: linear-gradient(90deg, #FFF, var(--silver));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    letter-spacing: -0.5px;
-    margin-bottom: 1.5rem;
+.stButton>button {
+    background: var(--primary) !important;
+    color: white !important;
+    border-radius: 8px !important;
+    padding: 0.8rem 2rem !important;
+    border: none !important;
+    font-weight: 500 !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
-def apple_style_header():
-    st.markdown("""
-    <div style="text-align: center; padding: 4rem 0 2rem;">
-        <h1 class="dynamic-header">LegalDoc Pro</h1>
-        <p style="color: rgba(255, 255, 255, 0.6); font-size: 1.1rem;">
-            Intelligent Document Analysis · Precision at Scale
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+def process_pdf(uploaded_file):
+    """Efficient PDF text extraction with metadata"""
+    with pdfplumber.open(uploaded_file) as pdf:
+        meta = pdf.metadata
+        text = "\n".join([page.extract_text() for page in pdf.pages[:50]])  # Limit to 50 pages
+    return {
+        'text': text,
+        'pages': len(pdf.pages),
+        'author': meta.get('Author', 'Unknown'),
+        'title': meta.get('Title', uploaded_file.name)
+    }
 
-def minimalist_uploader():
-    return st.file_uploader(
-        " ",
-        type=["pdf"],
-        key="luxury-uploader",
-        help="Drag and drop legal document",
-        label_visibility="collapsed"
-    )
+def analyze_document(text, models):
+    """Parallel document processing"""
+    with ThreadPoolExecutor() as executor:
+        summary_future = executor.submit(
+            models['summarizer'],
+            text[:10000],  # Process first 10k chars for speed
+            max_length=300,
+            min_length=100,
+            do_sample=False
+        )
+        
+        risks_future = executor.submit(
+            models['classifier'],
+            text[:5000],
+            candidate_labels=[
+                "unfair termination", "non-compete", "salary delay",
+                "discrimination", "harassment", "no severance",
+                "short notice", "mandatory arbitration",
+                "poor benefits", "intellectual property"
+            ],
+            multi_label=True
+        )
+        
+        return {
+            'summary': summary_future.result()[0]['summary_text'],
+            'risks': pd.DataFrame({
+                'Risk': risks_future.result()['labels'],
+                'Confidence': risks_future.result()['scores']
+            }).sort_values('Confidence', ascending=False)
+        }
 
-def create_apple_chart(df):
-    fig = px.bar(
-        df,
-        x='Confidence',
-        y='Red Flag',
-        orientation='h',
-        color='Confidence',
-        color_continuous_scale='Viridis',
-        text='Confidence',
-        height=400
-    )
-    
-    fig.update_layout(
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        font_color='white',
-        xaxis=dict(showgrid=False),
-        yaxis=dict(showgrid=False),
-        coloraxis_showscale=False,
-        margin=dict(l=0, r=0, t=30, b=0)
-    )
-    
-    fig.update_traces(
-        texttemplate='%{text:.0%}',
-        textposition='outside',
-        marker_line_width=0,
-        textfont_size=14
-    )
-    
-    return fig
-
-def generate_luxury_report(summary, df, fig):
+def create_executive_report(data, fig):
+    """Generate professional PDF report"""
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
@@ -146,107 +156,138 @@ def generate_luxury_report(summary, df, fig):
     story = []
     
     # Header
-    header = Paragraph("<font color='#FFFFFF'>LegalDoc Pro Analysis Report</font>", 
-                      styles['Title'])
-    story.append(header)
+    story.append(Paragraph(f"<b>{data['title']}</b>", styles['Title']))
+    story.append(Spacer(1, 12))
+    
+    # Metadata
+    meta_table = Table([
+        ["Author", data['author']],
+        ["Pages", str(data['pages'])],
+        ["Analyzed On", pd.Timestamp.now().strftime("%Y-%m-%d")]
+    ], colWidths=[100, 400])
+    story.append(meta_table)
     story.append(Spacer(1, 24))
     
     # Summary
-    summary_style = styles["BodyText"].clone('summary')
-    summary_style.textColor = colors.HexColor('#FFFFFF')
-    story.append(Paragraph("<b>Executive Summary:</b>", summary_style))
-    story.append(Spacer(1, 12))
-    story.append(Paragraph(summary, summary_style))
+    story.append(Paragraph("<b>Executive Summary</b>", styles['Heading2']))
+    story.append(Paragraph(data['summary'], styles['BodyText']))
     story.append(Spacer(1, 24))
     
-    # Chart
+    # Risk Analysis
+    story.append(Paragraph("<b>Risk Analysis</b>", styles['Heading2']))
     img_buffer = BytesIO()
     fig.write_image(img_buffer)
     story.append(Image(img_buffer, width=500, height=300))
-    
-    # Findings
     story.append(Spacer(1, 24))
-    story.append(Paragraph("<b>Key Findings:</b>", summary_style))
-    for _, row in df.iterrows():
-        p = Paragraph(
-            f"▪ {row['Red Flag']}: <font color='#FFD700'>{row['Confidence']:.0%}</font>",
-            summary_style
-        )
-        story.append(p)
-        story.append(Spacer(1, 8))
+    
+    # Detailed Findings
+    story.append(Paragraph("<b>Key Findings</b>", styles['Heading3']))
+    risk_items = [
+        [Paragraph(f"• {row['Risk']}", styles['BodyText']),
+         Paragraph(f"{row['Confidence']:.1%}", styles['BodyText'])]
+        for _, row in data['risks'].iterrows()
+    ]
+    risk_table = Table(risk_items, colWidths=[400, 100])
+    story.append(risk_table)
     
     doc.build(story)
     return buffer
 
 def main():
-    apple_style_header()
+    """Main application flow"""
+    st.markdown('<div class="header-container">', unsafe_allow_html=True)
+    st.title("⚖️ LegalMind Pro")
+    st.markdown("Enterprise-grade legal document analysis with AI-powered insights")
+    st.markdown('</div>', unsafe_allow_html=True)
     
-    with st.container():
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            st.markdown("""
-            <div style="padding: 2rem; text-align: center;">
-                <div style="font-size: 4rem; margin-bottom: 1rem;">⚖️</div>
-                <p style="color: rgba(255, 255, 255, 0.8); line-height: 1.6;">
-                    Advanced AI-powered legal document analysis with precision-engineered insights.
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            with st.markdown('<div class="apple-card">', unsafe_allow_html=True):
-                uploaded_file = minimalist_uploader()
-                
-                if uploaded_file:
-                    st.markdown("""
-                    <div class="progress-bar">
-                        <div class="progress-fill" style="width: 100%"></div>
-                    </div>
-                    """, unsafe_allow_html=True)
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        with st.container():
+            st.subheader("Document Upload")
+            uploaded_file = st.file_uploader(
+                "Upload legal document (PDF)",
+                type="pdf",
+                label_visibility="collapsed"
+            )
+            
+            if uploaded_file:
+                with st.spinner("Analyzing document..."):
+                    start_time = time.time()
+                    models = load_models()
                     
-                    with st.spinner(" "):
-                        time.sleep(2)  # Simulated processing
-                        
-                        # Demo data
-                        summary = "This comprehensive analysis identifies key provisions and potential risk factors..."
-                        df = pd.DataFrame({
-                            'Red Flag': ['Non-compete Clause', 'Termination Terms', 'Arbitration Agreement'],
-                            'Confidence': [0.92, 0.85, 0.78]
-                        })
-                        
-                        with st.container():
-                            st.markdown("""
-                            <div style="margin: 2rem 0;">
-                                <h3 style="color: white; margin-bottom: 1rem;">Document Insights</h3>
-                            """, unsafe_allow_html=True)
-                            
-                            fig = create_apple_chart(df)
-                            st.plotly_chart(fig, use_container_width=True)
-                            
-                            # Report generation
-                            report_buffer = generate_luxury_report(summary, df, fig)
-                            
-                            # Download buttons
-                            col_a, col_b = st.columns(2)
-                            with col_a:
-                                st.download_button(
-                                    "Export PDF Report",
-                                    report_buffer.getvalue(),
-                                    "legal_analysis.pdf",
-                                    "application/pdf",
-                                    key='pdf-report',
-                                    use_container_width=True,
-                                    type='primary'
-                                )
-                            
-                            with col_b:
-                                st.download_button(
-                                    "Export Data",
-                                    df.to_csv().encode(),
-                                    "analysis_data.csv",
-                                    "text/csv",
-                                    use_container_width=True
-                                )
+                    # Process document
+                    doc_data = process_pdf(uploaded_file)
+                    analysis = analyze_document(doc_data['text'], models)
+                    
+                    # Create visualization
+                    fig = px.bar(
+                        analysis['risks'],
+                        x='Confidence',
+                        y='Risk',
+                        orientation='h',
+                        color='Confidence',
+                        color_continuous_scale='Bluered'
+                    )
+                    fig.update_layout(
+                        height=400,
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        paper_bgcolor='rgba(0,0,0,0)'
+                    )
+                    
+                    # Generate report
+                    report_buffer = create_executive_report({
+                        **doc_data,
+                        **analysis
+                    }, fig)
+                    
+                    st.success(f"Analysis completed in {time.time()-start_time:.1f}s")
+    
+    if uploaded_file:
+        with col2:
+            tab1, tab2, tab3 = st.tabs(["Summary", "Risk Analysis", "Full Report"])
+            
+            with tab1:
+                st.subheader("Document Summary")
+                st.markdown(f'<div class="analysis-card">{analysis["summary"]}</div>', 
+                           unsafe_allow_html=True)
+                
+                st.subheader("Metadata")
+                col_a, col_b, col_c = st.columns(3)
+                col_a.metric("Pages", doc_data['pages'])
+                col_b.metric("Author", doc_data['author'])
+                col_c.metric("Processed In", f"{time.time()-start_time:.1f}s")
+            
+            with tab2:
+                st.subheader("Risk Assessment")
+                st.plotly_chart(fig, use_container_width=True)
+                
+                st.dataframe(
+                    analysis['risks'].style.format({'Confidence': '{:.1%}'}),
+                    height=400,
+                    use_container_width=True
+                )
+            
+            with tab3:
+                st.subheader("Generate Reports")
+                col_x, col_y = st.columns(2)
+                
+                with col_x:
+                    st.download_button(
+                        "Download PDF Report",
+                        report_buffer.getvalue(),
+                        "legal_analysis.pdf",
+                        "application/pdf",
+                        key='pdf-report'
+                    )
+                
+                with col_y:
+                    st.download_button(
+                        "Export Data (CSV)",
+                        analysis['risks'].to_csv().encode(),
+                        "risk_analysis.csv",
+                        "text/csv"
+                    )
 
 if __name__ == "__main__":
     main()
