@@ -1,5 +1,3 @@
-# LegalDocSummarizer
-
 # 🧠 LegalDocSummarizer
 
 ![Logo](https://i.imgur.com/Hf1JcLn.png)
