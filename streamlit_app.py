@@ -1,104 +1,96 @@
+# app.py
 import streamlit as st
-from transformers import pipeline
-import pandas as pd
-import matplotlib.pyplot as plt
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
+import fitz  # PyMuPDF
+import base64
 import io
-import pdfplumber
+import matplotlib.pyplot as plt
+import pandas as pd
+import torch
+from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
+from sklearn.preprocessing import MinMaxScaler
+from sentence_transformers import SentenceTransformer
+from keybert import KeyBERT
 
-# -------- Extract Text from PDF -------- #
-def extract_text(uploaded_file):
-    with pdfplumber.open(uploaded_file) as pdf:
-        return "\n".join(page.extract_text() for page in pdf.pages if page.extract_text())
+# Load Summarizer & Models
+summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+model_ckpt = "unitary/toxic-bert"
+tokenizer = AutoTokenizer.from_pretrained(model_ckpt)
+redflag_model = AutoModelForSequenceClassification.from_pretrained(model_ckpt)
+embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+kw_model = KeyBERT(model=embed_model)
 
-# -------- Load Zero-Shot Model -------- #
-classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
-
-# -------- Load Summarization Model -------- #
-summarizer = pipeline("summarization", model="t5-small")
-
-# -------- Red Flag Labels -------- #
 red_flags = [
-    "unfair termination",
-    "non-compete clause",
-    "salary delay",
-    "discrimination",
-    "harassment",
-    "no severance",
-    "low notice period",
-    "mandatory arbitration",
-    "no health benefits",
-    "no paid leave"
+    "non-compete clause", "low notice period", "salary delay", "no paid leave",
+    "discrimination", "mandatory arbitration", "harassment", "no severance",
+    "unfair termination", "no health benefits"
 ]
 
-# -------- Detect Red Flags -------- #
+def extract_text_from_pdf(uploaded_file):
+    doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
+    return "\n".join([page.get_text() for page in doc])
+
+def summarize_text(text):
+    chunks = [text[i:i+800] for i in range(0, len(text), 800)]
+    summarized = [summarizer(chunk, max_length=80, min_length=25, do_sample=False)[0]['summary_text'] for chunk in chunks]
+    return " ".join(summarized)
+
+def generate_bullet_points(text):
+    keywords = kw_model.extract_keywords(text, keyphrase_ngram_range=(1, 2), stop_words='english', top_n=5)
+    return [kw[0] for kw in keywords]
+
 def detect_red_flags(text):
-    results = classifier(text, red_flags, multi_label=True)
-    return dict(zip(results['labels'], results['scores']))
+    inputs = tokenizer([text]*len(red_flags), padding=True, truncation=True, return_tensors="pt")
+    with torch.no_grad():
+        outputs = redflag_model(**inputs).logits
+        probs = torch.sigmoid(outputs).squeeze().numpy()
+    scaler = MinMaxScaler()
+    scores = scaler.fit_transform(probs.reshape(-1,1)).flatten()
+    return list(zip(red_flags, scores))
 
-# -------- Generate PDF Report -------- #
-def generate_pdf(data):
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
-    text_obj = c.beginText(50, 750)
-    text_obj.setFont("Helvetica", 12)
-    text_obj.textLine("Red Flag Detection Report")
-    text_obj.textLine("")
-    for index, row in data.iterrows():
-        text_obj.textLine(f"{row['Red Flag']}: {round(row['Score'], 3)}")
-    c.drawText(text_obj)
-    c.showPage()
-    c.save()
-    buffer.seek(0)
-    return buffer
+def generate_red_flag_chart(scores):
+    labels = [item[0] for item in scores]
+    values = [item[1] for item in scores]
+    fig, ax = plt.subplots()
+    ax.barh(labels, values, color="crimson")
+    ax.set_title("Detected Red Flags")
+    st.pyplot(fig)
 
-# -------- Streamlit UI -------- #
-st.set_page_config(page_title="Legal AI Dashboard", layout="centered")
-st.title("📄 Legal Document AI Dashboard")
-st.markdown("Upload a legal PDF to get an automatic summary and red flag detection report.")
+def get_table_download_link(df, filename="report.csv", filetype="csv"):
+    if filetype == "csv":
+        csv = df.to_csv(index=False)
+        b64 = base64.b64encode(csv.encode()).decode()
+        href = f'<a href="data:file/csv;base64,{b64}" download="{filename}">Download CSV Report</a>'
+    return href
 
-uploaded_file = st.file_uploader("📁 Upload PDF Document", type="pdf")
+# Streamlit App
+st.set_page_config(page_title="Smart Legal Analyzer", layout="centered")
+st.title("📄 Legal Document Analyzer")
 
+uploaded_file = st.file_uploader("Upload a legal PDF", type=["pdf"])
 if uploaded_file:
-    with st.spinner("Processing document..."):
-        text = extract_text(uploaded_file)
+    text = extract_text_from_pdf(uploaded_file)
+    st.success("PDF uploaded and parsed successfully!")
 
-    if text:
-        with st.spinner("Summarizing..."):
-            summary = summarizer(text[:1000])[0]['summary_text']
-            bullet_summary = "\n".join([f"- {line.strip().capitalize()}" for line in summary.split('.') if line.strip()])
+    with st.spinner("Summarizing document..."):
+        summary = summarize_text(text)
+        bullets = generate_bullet_points(summary)
 
-        with st.spinner("Detecting red flags..."):
-            flag_scores = detect_red_flags(text)
-            df_flags = pd.DataFrame(flag_scores.items(), columns=["Red Flag", "Score"]).sort_values("Score", ascending=False)
+    with st.spinner("Analyzing for red flags..."):
+        redflag_scores = detect_red_flags(text)
+        df = pd.DataFrame(redflag_scores, columns=["Red Flag", "Score"])
 
-        st.success("✅ Done! Here's your AI-generated dashboard:")
-
-        # Summary Section
-        st.subheader("📄 Document Summary")
+    # Show Summary
+    with st.expander("📑 Document Summary", expanded=True):
         st.markdown(f"**Paragraph Summary:**\n\n{summary}")
         st.markdown("**🔹 Bullet Points:**")
-        st.markdown(bullet_summary)
+        for b in bullets:
+            st.markdown(f"- {b}")
 
-        # Red Flag Table
-        st.subheader("⚠️ Red Flag Analysis")
-        st.dataframe(df_flags)
+    # Show Red Flags
+    with st.expander("⚠️ Red Flag Analysis", expanded=True):
+        st.dataframe(df.style.background_gradient(cmap='Reds'))
+        generate_red_flag_chart(redflag_scores)
 
-        # Bar Chart
-        fig, ax = plt.subplots()
-        ax.barh(df_flags["Red Flag"], df_flags["Score"], color='crimson')
-        ax.set_xlabel("Confidence Score")
-        ax.set_title("Detected Red Flags")
-        st.pyplot(fig)
-
-        # Export CSV
-        csv = df_flags.to_csv(index=False).encode("utf-8")
-        st.download_button("📥 Download CSV Report", data=csv, file_name="red_flag_report.csv", mime="text/csv")
-
-        # Export PDF
-        pdf_file = generate_pdf(df_flags)
-        st.download_button("📄 Download PDF Report", data=pdf_file, file_name="red_flag_report.pdf", mime="application/pdf")
-
-    else:
-        st.error("❌ No readable text found in the uploaded PDF.")
+    # Export Options
+    st.markdown(get_table_download_link(df), unsafe_allow_html=True)
+    st.download_button("📥 Download Summary as TXT", data=summary, file_name="summary.txt")
