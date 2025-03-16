@@ -1,77 +1,110 @@
 import streamlit as st
 import fitz  # PyMuPDF
+import nltk
+import io
 import pandas as pd
 import matplotlib.pyplot as plt
 import base64
-from transformers import pipeline
-import nltk
-from io import BytesIO
-nltk.download("punkt")
 from nltk.tokenize import sent_tokenize
+from transformers import pipeline
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import csv
 
-st.set_page_config(layout="wide")
-st.title("📄 Legal Document Analyzer")
+# Download punkt for NLTK
+nltk.download('punkt')
 
-uploaded_file = st.file_uploader("Upload a Legal Document (PDF)", type=["pdf"])
+# Load summarizer
+summarizer = pipeline("summarization")
+
+# Define red flags
+red_flags = [
+    "non-compete clause", "low notice period", "salary delay", "no paid leave",
+    "discrimination", "mandatory arbitration", "harassment", "no severance",
+    "unfair termination", "no health benefits"
+]
+
+# Simple keyword-based red flag detector using TF-IDF
+vectorizer = TfidfVectorizer().fit(red_flags)
+
+
+def extract_text_from_pdf(pdf_file):
+    doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    return text
+
+
+def summarize_text(text):
+    if len(text.split()) < 50:
+        return text
+    summary = summarizer(text[:1000], max_length=130, min_length=30, do_sample=False)
+    return summary[0]['summary_text']
+
+
+def detect_red_flags(text):
+    sentences = sent_tokenize(text)
+    scores = []
+    for flag in red_flags:
+        vecs = vectorizer.transform([flag] + sentences)
+        sims = cosine_similarity(vecs[0:1], vecs[1:]).flatten()
+        scores.append((flag, max(sims)))
+    return sorted(scores, key=lambda x: x[1], reverse=True)
+
+
+def download_link(object_to_download, download_filename, download_link_text):
+    if isinstance(object_to_download, pd.DataFrame):
+        towrite = io.BytesIO()
+        object_to_download.to_csv(towrite, index=False)
+        towrite.seek(0)
+        b64 = base64.b64encode(towrite.read()).decode()
+    else:
+        b64 = base64.b64encode(object_to_download.encode()).decode()
+
+    return f'<a href="data:file/txt;base64,{b64}" download="{download_filename}">{download_link_text}</a>'
+
+
+# Streamlit UI
+st.set_page_config(page_title="Legal Doc Analyzer", layout="wide")
+st.title("📄 Legal Document Analyzer Dashboard")
+
+uploaded_file = st.file_uploader("Upload a legal PDF", type="pdf")
 
 if uploaded_file:
-    with fitz.open(stream=uploaded_file.read(), filetype="pdf") as doc:
-        text = "\n".join(page.get_text() for page in doc)
+    text = extract_text_from_pdf(uploaded_file)
 
-    st.subheader("📃 Extracted Text Preview")
-    with st.expander("Click to expand"):
-        st.write(text)
+    with st.spinner("Generating summary..."):
+        summary = summarize_text(text)
 
-    # Summarization
-    summarizer = pipeline("summarization")
-    sentences = sent_tokenize(text)
-    chunks = [" ".join(sentences[i:i+5]) for i in range(0, len(sentences), 5)]
-    summary = ""
-    for chunk in chunks:
-        summary_piece = summarizer(chunk, max_length=100, min_length=30, do_sample=False)[0]["summary_text"]
-        summary += summary_piece + "\n"
+    st.subheader("📌 Document Summary")
+    st.markdown(f"**Paragraph Summary:**\n{text if len(text.split()) < 50 else summary}")
 
-    st.subheader("📝 Document Summary")
-    st.markdown(f"**Summary:**\n\n{summary}")
+    st.markdown("**\n\n🔹 Bullet Points:**")
+    bullets = sent_tokenize(summary)
+    for b in bullets:
+        st.markdown(f"- {b}")
 
-    bullet_points = "\n".join([f"- {sent}" for sent in sent_tokenize(summary)])
-    st.markdown("**\nBullet Points:**")
-    st.markdown(bullet_points)
+    with st.spinner("Analyzing red flags..."):
+        red_flag_scores = detect_red_flags(text)
+        df_flags = pd.DataFrame(red_flag_scores, columns=["Red Flag", "Score"])
 
-    # Red Flag Detection
-    red_flags = [
-        "non-compete clause",
-        "low notice period",
-        "salary delay",
-        "no paid leave",
-        "discrimination",
-        "mandatory arbitration",
-        "harassment",
-        "no severance",
-        "unfair termination",
-        "no health benefits"
-    ]
-
-    classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
-    results = classifier(text, red_flags)
-
-    df = pd.DataFrame({"Red Flag": results["labels"], "Score": results["scores"]})
     st.subheader("⚠️ Red Flag Analysis")
-    st.dataframe(df)
+    st.dataframe(df_flags)
 
+    st.subheader("📊 Detected Red Flags")
     fig, ax = plt.subplots()
-    df_sorted = df.sort_values("Score")
-    ax.barh(df_sorted["Red Flag"], df_sorted["Score"], color="crimson")
-    ax.set_xlabel("Confidence Score")
-    ax.set_title("Detected Red Flags")
+    df_flags_sorted = df_flags.sort_values("Score", ascending=True)
+    ax.barh(df_flags_sorted["Red Flag"], df_flags_sorted["Score"], color='crimson')
+    ax.set_xlabel("Risk Score")
+    ax.set_xlim([0, 1])
     st.pyplot(fig)
 
-    # Export Results
-    export_df = df.copy()
-    export_df["Summary"] = summary
-    buffer = BytesIO()
-    export_df.to_csv(buffer, index=False)
-    buffer.seek(0)
-    b64 = base64.b64encode(buffer.read()).decode()
-    href = f'<a href="data:file/csv;base64,{b64}" download="red_flag_analysis.csv">📥 Download Red Flag Report as CSV</a>'
-    st.markdown(href, unsafe_allow_html=True)
+    st.subheader("📥 Export Results")
+    csv_link = download_link(df_flags, "red_flags.csv", "Download Red Flags CSV")
+    st.markdown(csv_link, unsafe_allow_html=True)
+
+    summary_link = download_link(summary, "summary.txt", "Download Summary")
+    st.markdown(summary_link, unsafe_allow_html=True)
+
+    st.success("✅ Dashboard generated successfully!")
