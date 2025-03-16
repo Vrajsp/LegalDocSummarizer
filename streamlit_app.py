@@ -1,80 +1,69 @@
 import streamlit as st
-import pdfplumber
-from transformers import pipeline
-from nrclex import NRCLex
 import spacy
+from transformers import pipeline
+import pdfplumber
+from keybert import KeyBERT
+from sentence_transformers import SentenceTransformer
+from PIL import Image
 import matplotlib.pyplot as plt
-import sys
-import streamlit as st
+from nrclex import NRCLex
 
-st.write("Python version:", sys.version)
+# 📌 Initialize session state safely
+if "summary_method" not in st.session_state:
+    st.session_state["summary_method"] = "Extractive"  # or "Abstractive" if you prefer
 
-# Load summarizer pipeline
+# 📌 Load spaCy model
+try:
+    nlp = spacy.load("en_core_web_sm")
+except:
+    st.error("spaCy model not found. Please make sure 'en_core_web_sm' is installed.")
+    st.stop()
+
+# 📌 Load transformers model
 summarizer = pipeline("summarization")
 
-# Load spaCy model
-nlp = spacy.load("en_core_web_sm")
+# 📌 App title
+st.title("🧠 Legal Document Summarizer")
 
-# Page setup
-st.set_page_config(page_title="LegalDocSummarizer", layout="wide")
-st.title("📄 Legal Document Summarizer")
-st.markdown("Upload a legal PDF and get a quick AI-generated summary, emotion analysis, and argument breakdown.")
+# 📌 Upload section
+uploaded_file = st.file_uploader("Upload a legal document (PDF)", type=["pdf"])
 
-# File uploader
-uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
-
-if uploaded_file:
+if uploaded_file is not None:
     with pdfplumber.open(uploaded_file) as pdf:
-        full_text = ""
+        text = ""
         for page in pdf.pages:
-            full_text += page.extract_text() + "\n"
+            text += page.extract_text() + "\n"
 
-    st.subheader("📃 Extracted Text")
-    with st.expander("View full document text"):
-        st.text_area("Text", full_text, height=300)
+    st.subheader("📄 Extracted Text")
+    st.text_area("Text from PDF:", text, height=200)
 
-    # Summarization
-    st.subheader("✂️ Summary")
-    summary_chunks = []
-    for i in range(0, len(full_text), 1000):
-        chunk = full_text[i:i+1000]
-        if len(chunk.strip()) > 50:
-            result = summarizer(chunk, max_length=130, min_length=30, do_sample=False)
-            summary_chunks.append(result[0]["summary_text"])
+    # 📌 Summary type selector
+    st.radio("Choose Summary Type:", ["Extractive", "Abstractive"], key="summary_method")
 
-    summary = " ".join(summary_chunks)
-    st.success(summary)
+    # 📌 Generate summary
+    if st.button("Generate Summary"):
+        with st.spinner("Summarizing..."):
+            if st.session_state["summary_method"] == "Extractive":
+                kw_model = KeyBERT()
+                keywords = kw_model.extract_keywords(text, top_n=5)
+                st.subheader("📌 Key Phrases (Extractive)")
+                for kw in keywords:
+                    st.write(f"- {kw[0]}")
+            else:
+                summary = summarizer(text[:1024])[0]['summary_text']
+                st.subheader("📝 Summary (Abstractive)")
+                st.write(summary)
 
-    # Emotion Detection
-    st.subheader("💬 Emotion Detection")
-    emotion = NRCLex(full_text)
-    top_emotions = emotion.top_emotions
-
-    if top_emotions:
-        labels, scores = zip(*top_emotions)
-        fig, ax = plt.subplots()
-        ax.bar(labels, scores, color="orange")
-        st.pyplot(fig)
-    else:
-        st.info("No strong emotional tones detected.")
-
-    # Argument Mapping
-    st.subheader("🧠 Argument Structure")
-    doc = nlp(full_text[:1500])  # limit for performance
-
-    claims, evidences, conclusions = [], [], []
-    for sent in doc.sents:
-        lower = sent.text.lower()
-        if "we argue" in lower or "this suggests" in lower:
-            claims.append(sent.text)
-        elif "because" in lower or "due to" in lower:
-            evidences.append(sent.text)
-        elif "therefore" in lower or "hence" in lower or "thus" in lower:
-            conclusions.append(sent.text)
-
-    with st.expander("📌 Claims"):
-        for i, c in enumerate(claims): st.markdown(f"**{i+1}.** {c}")
-    with st.expander("🔍 Evidences"):
-        for i, e in enumerate(evidences): st.markdown(f"**{i+1}.** {e}")
-    with st.expander("✅ Conclusions"):
-        for i, con in enumerate(conclusions): st.markdown(f"**{i+1}.** {con}")
+    # 📌 Sentiment analysis
+    if st.button("Analyze Emotion"):
+        with st.spinner("Analyzing..."):
+            doc = NRCLex(text)
+            emotions = doc.raw_emotion_scores
+            if emotions:
+                st.subheader("❤️ Emotion Distribution")
+                fig, ax = plt.subplots()
+                ax.bar(emotions.keys(), emotions.values(), color="skyblue")
+                plt.xticks(rotation=45)
+                st.pyplot(fig)
+            else:
+                st.write("No clear emotional content detected.")
