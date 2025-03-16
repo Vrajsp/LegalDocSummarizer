@@ -1,69 +1,104 @@
 import streamlit as st
-import spacy
 from transformers import pipeline
-import pdfplumber
-from keybert import KeyBERT
-from sentence_transformers import SentenceTransformer
-from PIL import Image
+import pandas as pd
 import matplotlib.pyplot as plt
-from nrclex import NRCLex
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+import io
+import pdfplumber
 
-# 📌 Initialize session state safely
-if "summary_method" not in st.session_state:
-    st.session_state["summary_method"] = "Extractive"  # or "Abstractive" if you prefer
-
-# 📌 Load spaCy model
-try:
-    nlp = spacy.load("en_core_web_sm")
-except:
-    st.error("spaCy model not found. Please make sure 'en_core_web_sm' is installed.")
-    st.stop()
-
-# 📌 Load transformers model
-summarizer = pipeline("summarization")
-
-# 📌 App title
-st.title("🧠 Legal Document Summarizer")
-
-# 📌 Upload section
-uploaded_file = st.file_uploader("Upload a legal document (PDF)", type=["pdf"])
-
-if uploaded_file is not None:
+# -------- Extract Text from PDF -------- #
+def extract_text(uploaded_file):
     with pdfplumber.open(uploaded_file) as pdf:
-        text = ""
-        for page in pdf.pages:
-            text += page.extract_text() + "\n"
+        return "\n".join(page.extract_text() for page in pdf.pages if page.extract_text())
 
-    st.subheader("📄 Extracted Text")
-    st.text_area("Text from PDF:", text, height=200)
+# -------- Load Zero-Shot Model -------- #
+classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
 
-    # 📌 Summary type selector
-    st.radio("Choose Summary Type:", ["Extractive", "Abstractive"], key="summary_method")
+# -------- Load Summarization Model -------- #
+summarizer = pipeline("summarization", model="t5-small")
 
-    # 📌 Generate summary
-    if st.button("Generate Summary"):
+# -------- Red Flag Labels -------- #
+red_flags = [
+    "unfair termination",
+    "non-compete clause",
+    "salary delay",
+    "discrimination",
+    "harassment",
+    "no severance",
+    "low notice period",
+    "mandatory arbitration",
+    "no health benefits",
+    "no paid leave"
+]
+
+# -------- Detect Red Flags -------- #
+def detect_red_flags(text):
+    results = classifier(text, red_flags, multi_label=True)
+    return dict(zip(results['labels'], results['scores']))
+
+# -------- Generate PDF Report -------- #
+def generate_pdf(data):
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    text_obj = c.beginText(50, 750)
+    text_obj.setFont("Helvetica", 12)
+    text_obj.textLine("Red Flag Detection Report")
+    text_obj.textLine("")
+    for index, row in data.iterrows():
+        text_obj.textLine(f"{row['Red Flag']}: {round(row['Score'], 3)}")
+    c.drawText(text_obj)
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+# -------- Streamlit UI -------- #
+st.set_page_config(page_title="Legal AI Dashboard", layout="centered")
+st.title("📄 Legal Document AI Dashboard")
+st.markdown("Upload a legal PDF to get an automatic summary and red flag detection report.")
+
+uploaded_file = st.file_uploader("📁 Upload PDF Document", type="pdf")
+
+if uploaded_file:
+    with st.spinner("Processing document..."):
+        text = extract_text(uploaded_file)
+
+    if text:
         with st.spinner("Summarizing..."):
-            if st.session_state["summary_method"] == "Extractive":
-                kw_model = KeyBERT()
-                keywords = kw_model.extract_keywords(text, top_n=5)
-                st.subheader("📌 Key Phrases (Extractive)")
-                for kw in keywords:
-                    st.write(f"- {kw[0]}")
-            else:
-                summary = summarizer(text[:1024])[0]['summary_text']
-                st.subheader("📝 Summary (Abstractive)")
-                st.write(summary)
+            summary = summarizer(text[:1000])[0]['summary_text']
+            bullet_summary = "\n".join([f"- {line.strip().capitalize()}" for line in summary.split('.') if line.strip()])
 
-    # 📌 Sentiment analysis
-    if st.button("Analyze Emotion"):
-        with st.spinner("Analyzing..."):
-            doc = NRCLex(text)
-            emotions = doc.raw_emotion_scores
-            if emotions:
-                st.subheader("❤️ Emotion Distribution")
-                fig, ax = plt.subplots()
-                ax.bar(emotions.keys(), emotions.values(), color="skyblue")
-                plt.xticks(rotation=45)
-                st.pyplot(fig)
-            else:
-                st.write("No clear emotional content detected.")
+        with st.spinner("Detecting red flags..."):
+            flag_scores = detect_red_flags(text)
+            df_flags = pd.DataFrame(flag_scores.items(), columns=["Red Flag", "Score"]).sort_values("Score", ascending=False)
+
+        st.success("✅ Done! Here's your AI-generated dashboard:")
+
+        # Summary Section
+        st.subheader("📄 Document Summary")
+        st.markdown(f"**Paragraph Summary:**\n\n{summary}")
+        st.markdown("**🔹 Bullet Points:**")
+        st.markdown(bullet_summary)
+
+        # Red Flag Table
+        st.subheader("⚠️ Red Flag Analysis")
+        st.dataframe(df_flags)
+
+        # Bar Chart
+        fig, ax = plt.subplots()
+        ax.barh(df_flags["Red Flag"], df_flags["Score"], color='crimson')
+        ax.set_xlabel("Confidence Score")
+        ax.set_title("Detected Red Flags")
+        st.pyplot(fig)
+
+        # Export CSV
+        csv = df_flags.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Download CSV Report", data=csv, file_name="red_flag_report.csv", mime="text/csv")
+
+        # Export PDF
+        pdf_file = generate_pdf(df_flags)
+        st.download_button("📄 Download PDF Report", data=pdf_file, file_name="red_flag_report.pdf", mime="application/pdf")
+
+    else:
+        st.error("❌ No readable text found in the uploaded PDF.")
