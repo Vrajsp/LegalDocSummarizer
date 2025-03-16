@@ -8,3 +8,4 @@ sentence-transformers
 Pillow
 spacy
 nrclex
+matplotlib
