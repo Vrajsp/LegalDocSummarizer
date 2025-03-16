@@ -10,3 +10,10 @@ scikit-learn
 pandas
 fpdf
 PyMuPDF
+streamlit
+pdfplumber
+matplotlib
+pandas
+torch
+transformers
+sentence-transformers
