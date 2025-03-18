@@ -1,6 +1,7 @@
 # 🧠 LegalDocSummarizer
 
-![Website link]([https://legaldocsummarizer-ffbcyfq84aqkyvqicajc4m.streamlit.app/])
+# !Website link: 
+## https://legaldocsummarizer-ffbcyfq84aqkyvqicajc4m.streamlit.app/
 
 A powerful AI-powered tool for NGOs, citizens, and legal consultants to summarize legal documents and detect risky clauses — all in one click.
 
