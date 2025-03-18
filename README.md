@@ -18,9 +18,7 @@ A powerful AI-powered tool for NGOs, citizens, and legal consultants to summariz
 
 ---
 
-## 📸 Demo Screenshot
-
-![Screenshot](https://i.imgur.com/rHJjAnK.png)
+https://legaldocsummarizer-ffbcyfq84aqkyvqicajc4m.streamlit.app/
 
 ---
 
